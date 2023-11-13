@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	
+	_ = clients.NewGethClient()
 }
 
 func startApp() {
