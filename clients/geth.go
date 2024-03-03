@@ -121,6 +121,7 @@ func (geth *Geth) Download() error {
 
 		geth.getVersion(binaryPath)
 		log.Println("Successfully installed Geth")
+		return nil
 	}
 
 	geth.getVersion(binaryPath)
