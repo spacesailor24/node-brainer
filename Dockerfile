@@ -1,17 +1,11 @@
-# Use the official Golang image as a base image
-FROM golang:1.21
+FROM golang:1.22
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Copy the Go code to the container's working directory
 COPY . .
 
-# Install any dependencies (assuming you're using go modules)
 RUN go mod download
 
-# Compile the Go code
-RUN go build -o node-brainer
+RUN go build -o node-brainer ./cmd/main.go
 
-# Specify the command to run on container start
-ENTRYPOINT ["./node-brainer"]
+# CMD ["./node-brainer download --eth-client geth"]
