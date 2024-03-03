@@ -19,6 +19,16 @@ type githubTagCommitShaApiResponse struct {
 	} `json:"object"`
 }
 
+func checkIfPathExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func downloadAndExtract(url, dest string) error {
 	// Download the file
 	resp, err := http.Get(url)
