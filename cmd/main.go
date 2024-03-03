@@ -37,9 +37,13 @@ func main() {
 
 func initClient(c *cli.Context) (clients.Client, error) {
 	var client clients.Client
+	var err error
 	switch c.String("eth-client") {
 	case "geth":
-		client = clients.NewGethClient()
+		client, err = clients.NewGethClient()
+		if err != nil {
+			return nil, err
+		}
 	case "lighthouse":
 		client = clients.NewLighthouseClient()
 	default:

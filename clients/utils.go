@@ -9,6 +9,16 @@ import (
 	"path/filepath"
 )
 
+type githubReleaseApiResponse struct {
+	TagName string `json:"tag_name"`
+}
+
+type githubTagCommitShaApiResponse struct {
+	Object struct {
+		SHA string `json:"sha"`
+	} `json:"object"`
+}
+
 func downloadAndExtract(url, dest string) error {
 	// Download the file
 	resp, err := http.Get(url)

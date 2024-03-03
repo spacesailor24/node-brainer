@@ -1,0 +1,14 @@
+{
+    "network": "mainnet",
+    "datadir": "nodebrainer-geth",
+    "authrpc": {
+        "addr": "localhost",
+        "port": "8551",
+        "vhosts": "localhost",
+        "jwtsecret": "nodebrainer-geth-jwtsecret"
+    },
+    "http": {
+        "enabled": true,
+        "api": ["eth", "net"]
+    }
+}

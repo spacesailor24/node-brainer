@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -17,25 +19,62 @@ type Geth struct {
 	releasesUrl     string
 	downloadUrl     string
 	tagCommitShaUrl string
+	config          Config
 }
 
-type githubReleaseApiResponse struct {
-	TagName string `json:"tag_name"`
+type Config struct {
+	Network string  `json:"network"`
+	DataDir string  `json:"datadir"`
+	AuthRPC AuthRPC `json:"authrpc"`
+	HTTP    HTTP    `json:"http"`
 }
 
-type githubTagCommitShaApiResponse struct {
-	Object struct {
-		SHA string `json:"sha"`
-	} `json:"object"`
+type AuthRPC struct {
+	Addr      string `json:"addr"`
+	Port      string `json:"port"`
+	VHosts    string `json:"vhosts"`
+	JWTSecret string `json:"jwtsecret"`
 }
 
-func NewGethClient() *Geth {
+type HTTP struct {
+	Enabled bool     `json:"enabled"`
+	API     []string `json:"api"`
+}
+
+func NewGethClient() (*Geth, error) {
+	config, err := parseConfig()
+	if err != nil {
+		return &Geth{}, fmt.Errorf("failed to create new Geth client: %w", err)
+	}
+
 	return &Geth{
 		name:            "geth",
 		releasesUrl:     "https://api.github.com/repos/ethereum/go-ethereum/releases/latest",
 		tagCommitShaUrl: "https://api.github.com/repos/ethereum/go-ethereum/git/refs/tags/{{.GIT_TAG}}",
 		downloadUrl:     "https://gethstore.blob.core.windows.net/builds/geth-{{.OS}}-{{.ARCH}}-{{.GIT_TAG}}-{{.GIT_COMMIT}}.tar.gz",
+		config: config,
+	}, nil
+}
+
+func parseConfig() (Config, error) {
+	file, err := os.Open("clients/configs/geth.json")
+	if err != nil {
+		return Config{}, fmt.Errorf("failed to open Geth config file at ./configs/geth.json: %w", err)
 	}
+	defer file.Close()
+
+	byteValue, err := ioutil.ReadAll(file)
+    if err != nil {
+        return Config{}, fmt.Errorf("failed to read Geth config file at ./configs/geth.json: %w", err)
+    }
+
+	var config Config
+	err = json.Unmarshal(byteValue, &config)
+	if err != nil {
+		return Config{}, fmt.Errorf("failed to parse Geth config file at ./configs/geth.json: %w", err)
+	}
+
+	return config, nil
 }
 
 func (geth *Geth) Download() error {
@@ -73,7 +112,6 @@ func (geth *Geth) Download() error {
 	}
 
 	binaryPath := fmt.Sprintf("%s/%s-%s-%s-%s-%s/geth", downloadPath, geth.name, runtime.GOOS, runtime.GOARCH, strings.Replace(latestReleaseTag, "v", "", 1), commitSha)
-	log.Println(binaryPath)
 	cmd := exec.Command(binaryPath, "--version")
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("there was an error executing the --version command using the downloaded %s binary: %w", geth.name, err)
