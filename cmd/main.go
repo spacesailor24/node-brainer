@@ -12,7 +12,7 @@ import (
 func main() {
 	app := &cli.App{
 		Name:  "Node Brainer",
-		Usage: "A terminal UI for managing ETH clients",
+		Usage: "A CLI for managing ETH clients",
 		Commands: []*cli.Command{
 			{
 				Name:  "download",
@@ -49,6 +49,18 @@ func main() {
 					},
 				},
 				Action: stop,
+			},
+			{
+				Name:  "logs",
+				Usage: "Shows the logs for a specified ETH client",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:     "eth-client",
+						Usage:    "Specifies what ETH client to show logs for",
+						Required: true,
+					},
+				},
+				Action: logs,
 			},
 		},
 	}
@@ -112,6 +124,20 @@ func stop(c *cli.Context) error {
 	}
 
 	err = client.Stop()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func logs(c *cli.Context) error {
+	client, err := initClient(c)
+	if err != nil {
+		return err
+	}
+
+	err = client.Logs()
 	if err != nil {
 		return err
 	}

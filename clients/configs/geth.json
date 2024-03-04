@@ -1,14 +1,26 @@
 {
-    "network": "mainnet",
-    "datadir": "nodebrainer-geth",
-    "authrpc": {
-        "addr": "localhost",
-        "port": "8551",
-        "vhosts": "localhost",
-        "jwtsecret": "nodebrainer-geth-jwtsecret"
-    },
-    "http": {
-        "enabled": true,
-        "api": ["eth", "net"]
-    }
+ "network": "mainnet",
+ "datadir": "clients/datadirs/geth",
+ "stdoutFile": "clients/stdouts/geth",
+ "authrpc": {
+  "addr": "localhost",
+  "port": "8551",
+  "vhosts": "localhost",
+  "jwtsecret": "clients/secrets/geth"
+ },
+ "http": {
+  "enabled": true,
+  "api": [
+   "eth",
+   "net"
+  ]
+ },
+ "binary": {
+  "path": "clients/binaries/geth/v1.13.14/geth-darwin-arm64-1.13.14-2bd6bd01/geth",
+  "version": "v1.13.14",
+  "os": "darwin",
+  "arch": "arm64",
+  "shaCommit": "2bd6bd01"
+ },
+ "pid": -1
 }

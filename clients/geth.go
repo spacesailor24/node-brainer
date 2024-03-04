@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"text/template"
+	"time"
 )
 
 type Geth struct {
@@ -24,8 +25,10 @@ type Geth struct {
 }
 
 type Config struct {
+	rootPath string
 	Network string  `json:"network"`
 	DataDir string  `json:"datadir"`
+	StdoutFile string `json:"stdoutFile"`
 	AuthRPC AuthRPC `json:"authrpc"`
 	HTTP    HTTP    `json:"http"`
 	Binary  Binary  `json:"binary"`
@@ -46,6 +49,10 @@ type HTTP struct {
 
 type Binary struct {
 	Path string `json:"path"`
+	Version string `json:"version"`
+	OS string `json:"os"`
+	Arch string `json:"arch"`
+	ShaCommit string `json:"shaCommit"`
 }
 
 func NewGethClient() (*Geth, error) {
@@ -74,8 +81,7 @@ func (geth *Geth) Download() error {
 		return err
 	}
 
-	downloadPath := fmt.Sprintf("./clients/binaries/%s/%s", geth.name, latestReleaseTag)
-
+	downloadPath := fmt.Sprintf("%s/clients/binaries/%s/%s", geth.config.rootPath, geth.name, latestReleaseTag)
 	binaryPath := fmt.Sprintf("%s/%s-%s-%s-%s-%s/geth", downloadPath, geth.name, runtime.GOOS, runtime.GOARCH, strings.Replace(latestReleaseTag, "v", "", 1), commitSha)
 	exists, err := checkIfPathExists(binaryPath)
 	if err != nil {
@@ -107,6 +113,15 @@ func (geth *Geth) Download() error {
 
 		geth.getVersion(binaryPath)
 		log.Println("Successfully installed Geth")
+
+		geth.config.Binary.Path = fmt.Sprintf("clients/binaries/%s-%s-%s-%s-%s/geth", geth.name, runtime.GOOS, runtime.GOARCH, strings.Replace(latestReleaseTag, "v", "", 1), commitSha)
+		geth.config.Binary.Version = latestReleaseTag
+		geth.config.Binary.OS = runtime.GOOS
+		geth.config.Binary.Arch = runtime.GOARCH
+		geth.config.Binary.ShaCommit = commitSha
+		// TODO Consider adding to Config struct
+		writeConfig(geth.config, fmt.Sprintf("%s/clients/configs/geth.json", geth.config.rootPath))
+
 		return nil
 	}
 
@@ -116,7 +131,7 @@ func (geth *Geth) Download() error {
 }
 
 func (geth *Geth) Start() error {
-	exists, err := checkIfPathExists(geth.config.AuthRPC.JWTSecret)
+	exists, err := checkIfPathExists(fmt.Sprintf("%s/%s", geth.config.rootPath, geth.config.AuthRPC.JWTSecret))
 	if err != nil {
 		return fmt.Errorf("error checking if JWT secret exists: %w", err)
 	}
@@ -126,21 +141,17 @@ func (geth *Geth) Start() error {
 		}
 	}
 
-	tmpl, err := template.New("gethOptions").Parse("--{{.Network}} --datadir {{.DataDir}} --authrpc.addr {{.AuthRPC.Addr}} --authrpc.port {{.AuthRPC.Port}} --authrpc.vhosts {{.AuthRPC.VHosts}} --authrpc.jwtsecret {{.AuthRPC.JWTSecret}} --http --http.api eth,net")
+	stdoutFile, err := os.OpenFile(fmt.Sprintf("%s/%s", geth.config.rootPath, geth.config.StdoutFile), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
-		return fmt.Errorf("error creating Geth start command template: %w", err)
+		return fmt.Errorf("error opening file for Geth output: %w", err)
 	}
-
-	var startCmdBytes bytes.Buffer
-	if err := tmpl.Execute(&startCmdBytes, geth.config); err != nil {
-		return fmt.Errorf("error executing Geth start command template: %w", err)
-	}
+	defer stdoutFile.Close()
 
 	cmd := exec.Command(
-		geth.config.Binary.Path,
+		fmt.Sprintf("%s/%s", geth.config.rootPath, geth.config.Binary.Path),
 		fmt.Sprintf("--%s", geth.config.Network),
 		"--datadir",
-		geth.config.DataDir,
+		fmt.Sprintf("%s/%s", geth.config.rootPath, geth.config.DataDir),
 		"--authrpc.addr",
 		geth.config.AuthRPC.Addr,
 		"--authrpc.port",
@@ -148,20 +159,22 @@ func (geth *Geth) Start() error {
 		"--authrpc.vhosts",
 		geth.config.AuthRPC.VHosts,
 		"--authrpc.jwtsecret",
-		geth.config.AuthRPC.JWTSecret,
+		fmt.Sprintf("%s/%s", geth.config.rootPath, geth.config.AuthRPC.JWTSecret),
 		"--http",
 		"--http.api",
 		"eth,net",
 	)
+	cmd.Stdout = stdoutFile
+	cmd.Stderr = stdoutFile
+
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("error starting Geth: %w", err)
 	}
 
-	log.Printf("Successfully started Geth with process id: %d", cmd.Process.Pid)
+	log.Printf("Successfully started Geth with process id: %d. Output redirected to %s", cmd.Process.Pid, fmt.Sprintf("%s/%s", geth.config.rootPath, geth.config.StdoutFile))
 
 	geth.config.PID = cmd.Process.Pid
-	// TODO Un-hardcode
-	if err = writeConfig(geth.config, "clients/configs/geth.json"); err != nil {
+	if err = writeConfig(geth.config, fmt.Sprintf("%s/clients/configs/geth.json", geth.config.rootPath)); err != nil {
 		return err
 	}
 
@@ -187,32 +200,53 @@ func (geth *Geth) Stop() error {
 	log.Printf("Successfully stopped Geth process with pid %d", geth.config.PID)
 	
 	geth.config.PID = -1
-	// TODO Un-hardcode
-	if err = writeConfig(geth.config, "clients/configs/geth.json"); err != nil {
+	if err = writeConfig(geth.config, fmt.Sprintf("%s/clients/configs/geth.json", geth.config.rootPath)); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func parseConfig() (Config, error) {
-	// TODO Un-hardcode
-	file, err := os.Open("clients/configs/geth.json")
+func (geth *Geth) Logs() error {
+	logContent, err := ioutil.ReadFile(fmt.Sprintf("%s/%s", geth.config.rootPath, geth.config.StdoutFile))
 	if err != nil {
-		return Config{}, fmt.Errorf("failed to open Geth config file at ./configs/geth.json: %w", err)
+		return fmt.Errorf("error reading log file: %w", err)
+	}
+
+	fmt.Print(string(logContent))
+
+	if err = followLogs(fmt.Sprintf("%s/%s", geth.config.rootPath, geth.config.StdoutFile)); err != nil {
+		return fmt.Errorf("error following log file: %w", err)
+	}
+
+	return nil
+}
+
+func parseConfig() (Config, error) {
+	rootPath, err := findRootPath("./")
+	if err != nil {
+		return Config{}, err
+	}
+
+	configPath := fmt.Sprintf("%s/clients/configs/geth.json", rootPath)
+	file, err := os.Open(configPath)
+	if err != nil {
+		return Config{}, fmt.Errorf("failed to open Geth config file at %s: %w", configPath, err)
 	}
 	defer file.Close()
 
 	byteValue, err := io.ReadAll(file)
 	if err != nil {
-		return Config{}, fmt.Errorf("failed to read Geth config file at ./configs/geth.json: %w", err)
+		return Config{}, fmt.Errorf("failed to read Geth config file at %s: %w", configPath, err)
 	}
 
 	var config Config
 	err = json.Unmarshal(byteValue, &config)
 	if err != nil {
-		return Config{}, fmt.Errorf("failed to parse Geth config file at ./configs/geth.json: %w", err)
+		return Config{}, fmt.Errorf("failed to parse Geth config file at %s: %w", configPath, err)
 	}
+
+	config.rootPath = rootPath
 
 	return config, nil
 }
@@ -228,6 +262,7 @@ func writeConfig(config Config, path string) error {
 		return fmt.Errorf("error writing config to %s: %w", path, err)
 	}
 
+	log.Printf("Successfully wrote config to: %s", path)
 	return nil
 }
 
@@ -311,4 +346,37 @@ func (geth *Geth) createJwtSecret() error {
 	}
 
 	return nil
+}
+
+func followLogs(filePath string) error {
+    // Open the log file.
+    file, err := os.Open(filePath)
+    if err != nil {
+        return fmt.Errorf("error opening log file: %w", err)
+    }
+    defer file.Close()
+
+    // Seek to the end of the file to start reading from the latest entry.
+    _, err = file.Seek(0, io.SeekEnd)
+    if err != nil {
+        return fmt.Errorf("error seeking log file: %w", err)
+    }
+
+    // Continuously read from the file.
+    for {
+        // Attempt to read new content.
+        data := make([]byte, 4096)
+        n, err := file.Read(data)
+        if err != nil && err != io.EOF {
+            return fmt.Errorf("error reading log file: %w", err)
+        }
+        if n > 0 {
+            fmt.Print(string(data[:n]))
+        }
+
+        // If we reach the end of the file (no new content), wait before trying again.
+        if err == io.EOF {
+            time.Sleep(time.Second)
+        }
+    }
 }

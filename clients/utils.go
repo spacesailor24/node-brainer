@@ -3,6 +3,7 @@ package clients
 import (
 	"archive/tar"
 	"compress/gzip"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -19,6 +20,13 @@ type githubTagCommitShaApiResponse struct {
 	} `json:"object"`
 }
 
+// ProgressReader wraps an io.Reader to report progress.
+type ProgressReader struct {
+	r io.Reader // underlying reader
+	totalRead int64 // total bytes read
+	totalSize int64 // total size of the file
+}
+
 func checkIfPathExists(path string) (bool, error) {
 	_, err := os.Stat(path)
 	if os.IsNotExist(err) {
@@ -29,6 +37,40 @@ func checkIfPathExists(path string) (bool, error) {
 	return true, nil
 }
 
+// findRootPath will recursively search upwards for a go.mod file.
+// This depends on the structure of the repo having a go.mod file at the root.
+func findRootPath(startDir string) (string, error) {
+	dir, err := filepath.Abs(startDir)
+	if err != nil {
+		return "", err
+	}
+	for {
+		modulePath := filepath.Join(dir, "go.mod")
+		if _, err := os.Stat(modulePath); err == nil {
+			return dir, nil
+		}
+		parentDir := filepath.Dir(dir)
+		// Check if we reached the filesystem root
+		if parentDir == dir {
+			break
+		}
+		dir = parentDir
+	}
+	return "", fmt.Errorf("root not found")
+}
+
+// Read implements the io.Reader interface for ProgressReader.
+func (pr *ProgressReader) Read(p []byte) (int, error) {
+	n, err := pr.r.Read(p)
+	pr.totalRead += int64(n)
+
+	// Log progress
+	percentComplete := float64(pr.totalRead) / float64(pr.totalSize) * 100
+	fmt.Printf("\rDownloading... %.2f%% complete", percentComplete)
+
+	return n, err
+}
+
 func downloadAndExtract(url, dest string) error {
 	// Download the file
 	resp, err := http.Get(url)
@@ -37,8 +79,20 @@ func downloadAndExtract(url, dest string) error {
 	}
 	defer resp.Body.Close()
 
+	// Check if we can determine the total size
+	totalSize := resp.ContentLength
+	if totalSize <= 0 {
+		fmt.Println("Cannot determine the total size of the download.")
+	}
+
+	// Wrap the response body in a ProgressReader
+	progressReader := &ProgressReader{
+		r: resp.Body,
+		totalSize: totalSize,
+	}
+
 	// Create a gzip reader
-	gzr, err := gzip.NewReader(resp.Body)
+	gzr, err := gzip.NewReader(progressReader)
 	if err != nil {
 		return err
 	}
@@ -52,6 +106,7 @@ func downloadAndExtract(url, dest string) error {
 		header, err := tr.Next()
 
 		if err == io.EOF {
+			fmt.Println("\nDownload and extraction complete.")
 			break
 		}
 		if err != nil {
@@ -60,17 +115,6 @@ func downloadAndExtract(url, dest string) error {
 
 		// Target extraction path
 		target := filepath.Join(dest, header.Name)
-
-		// TODO Was causing some issues running binary after extracting
-		// Modify header.Name to remove the base directory portion.
-		// This splits the path and uses all but the first element (the base directory).
-		// parts := strings.SplitN(header.Name, "/", 2)
-		// if len(parts) < 2 {
-		//     // Skip the base directory itself, or continue based on specific needs.
-		//     continue
-		// }
-		// modifiedName := parts[1]
-		// target := filepath.Join(dest, modifiedName)
 
 		switch header.Typeflag {
 		case tar.TypeDir:
