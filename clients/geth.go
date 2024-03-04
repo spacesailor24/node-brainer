@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -27,6 +28,8 @@ type Config struct {
 	DataDir string  `json:"datadir"`
 	AuthRPC AuthRPC `json:"authrpc"`
 	HTTP    HTTP    `json:"http"`
+	Binary  Binary  `json:"binary"`
+	PID     int	`json:"pid"`
 }
 
 type AuthRPC struct {
@@ -39,6 +42,10 @@ type AuthRPC struct {
 type HTTP struct {
 	Enabled bool     `json:"enabled"`
 	API     []string `json:"api"`
+}
+
+type Binary struct {
+	Path string `json:"path"`
 }
 
 func NewGethClient() (*Geth, error) {
@@ -54,27 +61,6 @@ func NewGethClient() (*Geth, error) {
 		downloadUrl:     "https://gethstore.blob.core.windows.net/builds/geth-{{.OS}}-{{.ARCH}}-{{.GIT_TAG}}-{{.GIT_COMMIT}}.tar.gz",
 		config:          config,
 	}, nil
-}
-
-func parseConfig() (Config, error) {
-	file, err := os.Open("clients/configs/geth.json")
-	if err != nil {
-		return Config{}, fmt.Errorf("failed to open Geth config file at ./configs/geth.json: %w", err)
-	}
-	defer file.Close()
-
-	byteValue, err := ioutil.ReadAll(file)
-	if err != nil {
-		return Config{}, fmt.Errorf("failed to read Geth config file at ./configs/geth.json: %w", err)
-	}
-
-	var config Config
-	err = json.Unmarshal(byteValue, &config)
-	if err != nil {
-		return Config{}, fmt.Errorf("failed to parse Geth config file at ./configs/geth.json: %w", err)
-	}
-
-	return config, nil
 }
 
 func (geth *Geth) Download() error {
@@ -126,6 +112,121 @@ func (geth *Geth) Download() error {
 
 	geth.getVersion(binaryPath)
 	log.Printf("Geth already installed, using: %s", binaryPath)
+	return nil
+}
+
+func (geth *Geth) Start() error {
+	exists, err := checkIfPathExists(geth.config.AuthRPC.JWTSecret)
+	if err != nil {
+		return fmt.Errorf("error checking if JWT secret exists: %w", err)
+	}
+	if (!exists) {
+		if err = geth.createJwtSecret(); err != nil {
+			return err
+		}
+	}
+
+	tmpl, err := template.New("gethOptions").Parse("--{{.Network}} --datadir {{.DataDir}} --authrpc.addr {{.AuthRPC.Addr}} --authrpc.port {{.AuthRPC.Port}} --authrpc.vhosts {{.AuthRPC.VHosts}} --authrpc.jwtsecret {{.AuthRPC.JWTSecret}} --http --http.api eth,net")
+	if err != nil {
+		return fmt.Errorf("error creating Geth start command template: %w", err)
+	}
+
+	var startCmdBytes bytes.Buffer
+	if err := tmpl.Execute(&startCmdBytes, geth.config); err != nil {
+		return fmt.Errorf("error executing Geth start command template: %w", err)
+	}
+
+	cmd := exec.Command(
+		geth.config.Binary.Path,
+		fmt.Sprintf("--%s", geth.config.Network),
+		"--datadir",
+		geth.config.DataDir,
+		"--authrpc.addr",
+		geth.config.AuthRPC.Addr,
+		"--authrpc.port",
+		geth.config.AuthRPC.Port,
+		"--authrpc.vhosts",
+		geth.config.AuthRPC.VHosts,
+		"--authrpc.jwtsecret",
+		geth.config.AuthRPC.JWTSecret,
+		"--http",
+		"--http.api",
+		"eth,net",
+	)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("error starting Geth: %w", err)
+	}
+
+	log.Printf("Successfully started Geth with process id: %d", cmd.Process.Pid)
+
+	geth.config.PID = cmd.Process.Pid
+	// TODO Un-hardcode
+	if err = writeConfig(geth.config, "clients/configs/geth.json"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (geth *Geth) Stop() error {
+	if (geth.config.PID == -1) {
+		// TODO Replace with a better check, perhaps search for running Geth instance?
+		return fmt.Errorf("no Geth process running")
+	}
+
+	process, err := os.FindProcess(geth.config.PID)
+	if err != nil {
+		return fmt.Errorf("error finding Geth process with pid %d: %w", geth.config.PID, err)
+	}
+
+	// TODO Interrupt won't work on Windows
+	if err = process.Signal(os.Interrupt); err != nil {
+		return fmt.Errorf("error interrupting Geth process with pid %d: %w", geth.config.PID, err)
+	}
+
+	log.Printf("Successfully stopped Geth process with pid %d", geth.config.PID)
+	
+	geth.config.PID = -1
+	// TODO Un-hardcode
+	if err = writeConfig(geth.config, "clients/configs/geth.json"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func parseConfig() (Config, error) {
+	// TODO Un-hardcode
+	file, err := os.Open("clients/configs/geth.json")
+	if err != nil {
+		return Config{}, fmt.Errorf("failed to open Geth config file at ./configs/geth.json: %w", err)
+	}
+	defer file.Close()
+
+	byteValue, err := io.ReadAll(file)
+	if err != nil {
+		return Config{}, fmt.Errorf("failed to read Geth config file at ./configs/geth.json: %w", err)
+	}
+
+	var config Config
+	err = json.Unmarshal(byteValue, &config)
+	if err != nil {
+		return Config{}, fmt.Errorf("failed to parse Geth config file at ./configs/geth.json: %w", err)
+	}
+
+	return config, nil
+}
+
+func writeConfig(config Config, path string) error {
+	data, err := json.MarshalIndent(config, "", " ")
+	if err != nil {
+		return fmt.Errorf("error marshaling provided config to JSON: %w", err)
+	}
+
+	err = ioutil.WriteFile(path, data, 0644)
+	if err != nil {
+		return fmt.Errorf("error writing config to %s: %w", path, err)
+	}
 
 	return nil
 }
@@ -185,6 +286,28 @@ func (geth *Geth) getVersion(binaryPath string) error {
 	cmd := exec.Command(binaryPath, "--version")
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("there was an error executing the --version command using the downloaded %s binary: %w", geth.name, err)
+	}
+
+	return nil
+}
+
+func (geth *Geth) createJwtSecret() error {
+	cmd := exec.Command("openssl", "rand", "-hex", "32")
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("error generating JWT secret: %w", err)
+	}
+
+	if err := ioutil.WriteFile(geth.config.AuthRPC.JWTSecret, output, 0644); err != nil {
+		return fmt.Errorf("error writing JWT secret to %s: %w", geth.config.AuthRPC.JWTSecret, err)
+	}
+
+	exists, err := checkIfPathExists(geth.config.AuthRPC.JWTSecret)
+	if err != nil {
+		return fmt.Errorf("error checking if JWT secret exists after creating it: %w", err)
+	}
+	if (!exists) {
+		return fmt.Errorf("JWT secret still doesn't exist at %s, even after attempting to create it", geth.config.AuthRPC.JWTSecret)
 	}
 
 	return nil
