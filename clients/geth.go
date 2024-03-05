@@ -21,10 +21,10 @@ type Geth struct {
 	releasesUrl     string
 	downloadUrl     string
 	tagCommitShaUrl string
-	config          Config
+	config          GethConfig
 }
 
-type Config struct {
+type GethConfig struct {
 	rootPath string
 	Network string  `json:"network"`
 	DataDir string  `json:"datadir"`
@@ -56,7 +56,7 @@ type Binary struct {
 }
 
 func NewGethClient() (*Geth, error) {
-	config, err := parseConfig()
+	config, err := parseGethConfig()
 	if err != nil {
 		return &Geth{}, fmt.Errorf("failed to create new Geth client: %w", err)
 	}
@@ -111,21 +111,24 @@ func (geth *Geth) Download() error {
 			return fmt.Errorf("there was an error downloading and extracting the Geth binary: %w", err)
 		}
 
-		geth.getVersion(binaryPath)
+		if err = geth.getVersion(binaryPath); err != nil {
+			return err
+		}
 		log.Println("Successfully installed Geth")
 
-		geth.config.Binary.Path = fmt.Sprintf("clients/binaries/%s-%s-%s-%s-%s/geth", geth.name, runtime.GOOS, runtime.GOARCH, strings.Replace(latestReleaseTag, "v", "", 1), commitSha)
+		geth.config.Binary.Path = fmt.Sprintf("clients/binaries/%s/%s/%s-%s-%s-%s-%s/geth", geth.name, latestReleaseTag, geth.name, runtime.GOOS, runtime.GOARCH, strings.Replace(latestReleaseTag, "v", "", 1), commitSha)
 		geth.config.Binary.Version = latestReleaseTag
 		geth.config.Binary.OS = runtime.GOOS
 		geth.config.Binary.Arch = runtime.GOARCH
 		geth.config.Binary.ShaCommit = commitSha
-		// TODO Consider adding to Config struct
-		writeConfig(geth.config, fmt.Sprintf("%s/clients/configs/geth.json", geth.config.rootPath))
+		writeGethConfig(geth.config, fmt.Sprintf("%s/clients/configs/geth.json", geth.config.rootPath))
 
 		return nil
 	}
 
-	geth.getVersion(binaryPath)
+	if err = geth.getVersion(binaryPath); err != nil {
+		return err
+	}
 	log.Printf("Geth already installed, using: %s", binaryPath)
 	return nil
 }
@@ -174,7 +177,7 @@ func (geth *Geth) Start() error {
 	log.Printf("Successfully started Geth with process id: %d. Output redirected to %s", cmd.Process.Pid, fmt.Sprintf("%s/%s", geth.config.rootPath, geth.config.StdoutFile))
 
 	geth.config.PID = cmd.Process.Pid
-	if err = writeConfig(geth.config, fmt.Sprintf("%s/clients/configs/geth.json", geth.config.rootPath)); err != nil {
+	if err = writeGethConfig(geth.config, fmt.Sprintf("%s/clients/configs/geth.json", geth.config.rootPath)); err != nil {
 		return err
 	}
 
@@ -200,7 +203,7 @@ func (geth *Geth) Stop() error {
 	log.Printf("Successfully stopped Geth process with pid %d", geth.config.PID)
 	
 	geth.config.PID = -1
-	if err = writeConfig(geth.config, fmt.Sprintf("%s/clients/configs/geth.json", geth.config.rootPath)); err != nil {
+	if err = writeGethConfig(geth.config, fmt.Sprintf("%s/clients/configs/geth.json", geth.config.rootPath)); err != nil {
 		return err
 	}
 
@@ -222,28 +225,28 @@ func (geth *Geth) Logs() error {
 	return nil
 }
 
-func parseConfig() (Config, error) {
+func parseGethConfig() (GethConfig, error) {
 	rootPath, err := findRootPath("./")
 	if err != nil {
-		return Config{}, err
+		return GethConfig{}, err
 	}
 
 	configPath := fmt.Sprintf("%s/clients/configs/geth.json", rootPath)
 	file, err := os.Open(configPath)
 	if err != nil {
-		return Config{}, fmt.Errorf("failed to open Geth config file at %s: %w", configPath, err)
+		return GethConfig{}, fmt.Errorf("failed to open Geth config file at %s: %w", configPath, err)
 	}
 	defer file.Close()
 
 	byteValue, err := io.ReadAll(file)
 	if err != nil {
-		return Config{}, fmt.Errorf("failed to read Geth config file at %s: %w", configPath, err)
+		return GethConfig{}, fmt.Errorf("failed to read Geth config file at %s: %w", configPath, err)
 	}
 
-	var config Config
+	var config GethConfig
 	err = json.Unmarshal(byteValue, &config)
 	if err != nil {
-		return Config{}, fmt.Errorf("failed to parse Geth config file at %s: %w", configPath, err)
+		return GethConfig{}, fmt.Errorf("failed to parse Geth config file at %s: %w", configPath, err)
 	}
 
 	config.rootPath = rootPath
@@ -251,7 +254,7 @@ func parseConfig() (Config, error) {
 	return config, nil
 }
 
-func writeConfig(config Config, path string) error {
+func writeGethConfig(config GethConfig, path string) error {
 	data, err := json.MarshalIndent(config, "", " ")
 	if err != nil {
 		return fmt.Errorf("error marshaling provided config to JSON: %w", err)

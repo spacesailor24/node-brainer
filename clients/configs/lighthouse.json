@@ -1,0 +1,19 @@
+{
+ "network": "mainnet",
+ "datadir": "clients/datadirs/lighthouse",
+ "stdoutFile": "clients/stdouts/lighthouse",
+ "execution": {
+  "endpoint": "http://localhost:8551",
+  "jwt": "clients/secrets/geth"
+ },
+ "checkpointSyncUrl": "https://mainnet.checkpoint.sigp.io",
+ "http": true,
+ "binary": {
+  "path": "clients/binaries/lighthouse/v5.0.0/lighthouse",
+  "version": "v5.0.0",
+  "os": "apple-darwin-portable",
+  "arch": "x86_64",
+  "shaCommit": ""
+ },
+ "pid": -1
+}

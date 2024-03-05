@@ -81,7 +81,10 @@ func initClient(c *cli.Context) (clients.Client, error) {
 			return nil, err
 		}
 	case "lighthouse":
-		// client = clients.NewLighthouseClient()
+		client, err = clients.NewLighthouseClient()
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, fmt.Errorf("unknown client: %s", c.String("eth-client"))
 	}

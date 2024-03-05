@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -72,7 +73,7 @@ func (pr *ProgressReader) Read(p []byte) (int, error) {
 }
 
 func downloadAndExtract(url, dest string) error {
-	// Download the file
+	log.Printf("Downloading from: %s", url)
 	resp, err := http.Get(url)
 	if err != nil {
 		return err
